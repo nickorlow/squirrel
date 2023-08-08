@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::table::table::ColumnDefinition;
+use crate::table::table_definition::ColumnDefinition;
 use crate::{Datatype, TableDefinition};
 use anyhow::anyhow;
 
@@ -36,34 +36,34 @@ pub struct InsertItem {
 }
 
 enum CreateParserState {
-    FindObject,
-    FindTableName,
-    FindColumnName,
-    FindColumnDefinitions,
-    FindColumnDatatype,
-    FindColumnDefinitionEnd,
-    FindColumnLength,
-    FindSemicolon,
+    Object,
+    TableName,
+    ColumnName,
+    ColumnDefinitions,
+    ColumnDatatype,
+    ColumnDefinitionEnd,
+    ColumnLength,
+    Semicolon,
 }
 
 enum SelectParserState {
-    FindWildcard, // Temporary, col selection coming soon
-    FindFrom,
-    FindTableName,
-    FindSemicolon,
+    Wildcard, // Temporary, col selection coming soon
+    FromKeyword,
+    TableName,
+    Semicolon,
 }
 
 enum InsertParserState {
-    FindIntoKeyword,
-    FindTableName,
-    FindColumnListBegin,
-    FindColumnName,
-    FindColumnNameEnd,
-    FindValuesKeyword,
-    FindValuesListBegin,
-    FindValue,
-    FindValueEnd,
-    FindSemicolon,
+    IntoKeyword,
+    TableName,
+    ColumnListBegin,
+    ColumnName,
+    ColumnNameEnd,
+    ValuesKeyword,
+    ValuesListBegin,
+    Value,
+    ValueEnd,
+    Semicolon,
 }
 
 pub fn tokenizer(text: String) -> Vec<String> {
@@ -95,7 +95,7 @@ pub fn tokenizer(text: String) -> Vec<String> {
 
 impl Command {
     fn parse_insert_command(tokens: &mut Vec<String>) -> ::anyhow::Result<Command> {
-        let mut state: InsertParserState = InsertParserState::FindIntoKeyword;
+        let mut state: InsertParserState = InsertParserState::IntoKeyword;
 
         let mut table_name = String::new();
         let mut column_name = String::new();
@@ -106,35 +106,35 @@ impl Command {
 
         while let Some(token) = &tokens.pop() {
             match state {
-                InsertParserState::FindIntoKeyword => {
+                InsertParserState::IntoKeyword => {
                     if !token.eq_ignore_ascii_case("INTO") {
                         return Err(anyhow!("Expected to find INTO at or near '{}'", token));
                     } else {
-                        state = InsertParserState::FindTableName;
+                        state = InsertParserState::TableName;
                     }
                 }
-                InsertParserState::FindTableName => {
+                InsertParserState::TableName => {
                     table_name = token.to_string();
-                    state = InsertParserState::FindColumnListBegin;
+                    state = InsertParserState::ColumnListBegin;
                 }
-                InsertParserState::FindColumnListBegin => {
+                InsertParserState::ColumnListBegin => {
                     if token != "(" {
                         return Err(anyhow!(
                             "Unexpected token at or near '{}'. Expected start of column list",
                             token
                         ));
                     }
-                    state = InsertParserState::FindColumnName;
+                    state = InsertParserState::ColumnName;
                 }
-                InsertParserState::FindColumnName => {
+                InsertParserState::ColumnName => {
                     column_name = token.to_string();
-                    state = InsertParserState::FindColumnNameEnd;
+                    state = InsertParserState::ColumnNameEnd;
                 }
-                InsertParserState::FindColumnNameEnd => {
+                InsertParserState::ColumnNameEnd => {
                     if token == "," {
-                        state = InsertParserState::FindColumnName;
+                        state = InsertParserState::ColumnName;
                     } else if token == ")" {
-                        state = InsertParserState::FindValuesKeyword;
+                        state = InsertParserState::ValuesKeyword;
                     } else {
                         return Err(anyhow!(
                             "Unexpected token at or near '{}'. Expected comma or rparen.",
@@ -143,33 +143,33 @@ impl Command {
                     }
                     column_list.push(column_name.clone());
                 }
-                InsertParserState::FindValuesKeyword => {
+                InsertParserState::ValuesKeyword => {
                     if token != "VALUES" {
                         return Err(anyhow!(
                             "Unexpected token at or near '{}'. Expected 'VALUES'.",
                             token
                         ));
                     }
-                    state = InsertParserState::FindValuesListBegin;
+                    state = InsertParserState::ValuesListBegin;
                 }
-                InsertParserState::FindValuesListBegin => {
+                InsertParserState::ValuesListBegin => {
                     if token != "(" {
                         return Err(anyhow!(
                             "Unexpected token at or near '{}'. Expected start of values list",
                             token
                         ));
                     }
-                    state = InsertParserState::FindValue;
+                    state = InsertParserState::Value;
                 }
-                InsertParserState::FindValue => {
+                InsertParserState::Value => {
                     column_val = token.to_string();
-                    state = InsertParserState::FindValueEnd;
+                    state = InsertParserState::ValueEnd;
                 }
-                InsertParserState::FindValueEnd => {
+                InsertParserState::ValueEnd => {
                     if token == "," {
-                        state = InsertParserState::FindValue;
+                        state = InsertParserState::Value;
                     } else if token == ")" {
-                        state = InsertParserState::FindSemicolon;
+                        state = InsertParserState::Semicolon;
                     } else {
                         return Err(anyhow!(
                             "Unexpected token at or near '{}'. Expected comma or rparen.",
@@ -179,7 +179,7 @@ impl Command {
 
                     value_list.push(column_val.clone());
                 }
-                InsertParserState::FindSemicolon => {
+                InsertParserState::Semicolon => {
                     if token != ";" {
                         return Err(anyhow!("Expected semicolon at or near '{}'", token));
                     } else {
@@ -208,32 +208,32 @@ impl Command {
     }
 
     fn parse_select_command(tokens: &mut Vec<String>) -> ::anyhow::Result<Command> {
-        let mut state: SelectParserState = SelectParserState::FindWildcard;
+        let mut state: SelectParserState = SelectParserState::Wildcard;
 
         // intermediate tmp vars
         let mut table_name = String::new();
 
         while let Some(token) = &tokens.pop() {
             match state {
-                SelectParserState::FindWildcard => {
+                SelectParserState::Wildcard => {
                     if token != "*" {
                         return Err(anyhow!("Expected to find selection at or near '{}' (SQUIRREL does not support column seletion)", token));
                     } else {
-                        state = SelectParserState::FindFrom;
+                        state = SelectParserState::FromKeyword;
                     }
                 }
-                SelectParserState::FindFrom => {
+                SelectParserState::FromKeyword => {
                     if !token.eq_ignore_ascii_case("FROM") {
                         return Err(anyhow!("Expected to find FROM at or near '{}'", token));
                     } else {
-                        state = SelectParserState::FindTableName;
+                        state = SelectParserState::TableName;
                     }
                 }
-                SelectParserState::FindTableName => {
+                SelectParserState::TableName => {
                     table_name = token.to_string();
-                    state = SelectParserState::FindSemicolon;
+                    state = SelectParserState::Semicolon;
                 }
-                SelectParserState::FindSemicolon => {
+                SelectParserState::Semicolon => {
                     if token != ";" {
                         return Err(anyhow!("Expected semicolon at or near '{}'", token));
                     } else {
@@ -247,7 +247,7 @@ impl Command {
     }
 
     fn parse_create_command(tokens: &mut Vec<String>) -> ::anyhow::Result<Command> {
-        let mut state: CreateParserState = CreateParserState::FindObject;
+        let mut state: CreateParserState = CreateParserState::Object;
         let mut col_defs: Vec<ColumnDefinition> = vec![];
 
         // intermediate tmp vars
@@ -258,41 +258,41 @@ impl Command {
 
         while let Some(token) = &tokens.pop() {
             match state {
-                CreateParserState::FindObject => match token.to_uppercase().as_str() {
+                CreateParserState::Object => match token.to_uppercase().as_str() {
                     "TABLE" => {
-                        state = CreateParserState::FindTableName;
+                        state = CreateParserState::TableName;
                     }
                     _ => return Err(anyhow!("Can't create object of type '{}'", token.as_str())),
                 },
-                CreateParserState::FindTableName => {
-                    state = CreateParserState::FindColumnDefinitions;
+                CreateParserState::TableName => {
+                    state = CreateParserState::ColumnDefinitions;
                     table_name = token.to_string();
                 }
-                CreateParserState::FindColumnDefinitions => {
+                CreateParserState::ColumnDefinitions => {
                     if token != "(" {
                         return Err(anyhow!("Could not find column list"));
                     } else {
-                        state = CreateParserState::FindColumnName;
+                        state = CreateParserState::ColumnName;
                     }
                 }
-                CreateParserState::FindColumnName => {
+                CreateParserState::ColumnName => {
                     col_name = token.to_string();
-                    state = CreateParserState::FindColumnDatatype;
+                    state = CreateParserState::ColumnDatatype;
                 }
-                CreateParserState::FindColumnDatatype => {
-                    let dtype = Datatype::from_str(token).unwrap();
+                CreateParserState::ColumnDatatype => {
+                    let dtype = Datatype::parse_from_str(token).unwrap();
                     if dtype.has_len() {
-                        state = CreateParserState::FindColumnLength;
+                        state = CreateParserState::ColumnLength;
                     } else {
-                        state = CreateParserState::FindColumnDefinitionEnd;
+                        state = CreateParserState::ColumnDefinitionEnd;
                     }
                     data_type = Some(dtype);
                 }
-                CreateParserState::FindColumnLength => {
+                CreateParserState::ColumnLength => {
                     length = token.parse()?;
-                    state = CreateParserState::FindColumnDefinitionEnd;
+                    state = CreateParserState::ColumnDefinitionEnd;
                 }
-                CreateParserState::FindColumnDefinitionEnd => {
+                CreateParserState::ColumnDefinitionEnd => {
                     let column_def = ColumnDefinition {
                         data_type: data_type.unwrap(),
                         length,
@@ -307,15 +307,15 @@ impl Command {
 
                     match token.as_str() {
                         "," => {
-                            state = CreateParserState::FindColumnName;
+                            state = CreateParserState::ColumnName;
                         }
                         ")" => {
-                            state = CreateParserState::FindSemicolon;
+                            state = CreateParserState::Semicolon;
                         }
                         _ => return Err(anyhow!("Expected end")),
                     }
                 }
-                CreateParserState::FindSemicolon => {
+                CreateParserState::Semicolon => {
                     if token != ";" {
                         return Err(anyhow!("Expected semicolon at or near '{}'", token));
                     } else {

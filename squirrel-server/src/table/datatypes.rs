@@ -1,3 +1,5 @@
+use anyhow::anyhow;
+
 #[derive(Debug, Eq, PartialEq)]
 pub enum Datatype {
     Integer,
@@ -54,14 +56,15 @@ impl Datatype {
             }
         }
     }
-    pub fn from_str(string: &str) -> Result<Datatype, String> {
+
+    pub fn parse_from_str(string: &str) -> ::anyhow::Result<Datatype> {
         match string {
-            "varchar" => return Ok(Datatype::CharacterVarying),
-            "character varying" => return Ok(Datatype::CharacterVarying),
-            "integer" => return Ok(Datatype::Integer),
-            "int" => return Ok(Datatype::Integer),
-            "int8" => return Ok(Datatype::Integer),
-            _ => return Err(String::from("Undefined data type")),
+            "varchar" => Ok(Datatype::CharacterVarying),
+            "character varying" => Ok(Datatype::CharacterVarying),
+            "integer" => Ok(Datatype::Integer),
+            "int" => Ok(Datatype::Integer),
+            "int8" => Ok(Datatype::Integer),
+            _ => Err(anyhow!("Undefined data type")),
         }
     }
 }

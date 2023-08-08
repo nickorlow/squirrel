@@ -1,2 +1,2 @@
 pub mod datatypes;
-pub mod table;
+pub mod table_definition;

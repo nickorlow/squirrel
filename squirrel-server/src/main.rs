@@ -10,7 +10,7 @@ pub use parser::command::Command;
 mod table;
 use parser::command::{CreateCommand, InsertCommand, SelectCommand};
 pub use table::datatypes::Datatype;
-pub use table::table::{ColumnDefinition, TableDefinition};
+pub use table::table_definition::{ColumnDefinition, TableDefinition};
 
 const BUFFER_SIZE: usize = 500;
 
@@ -27,7 +27,7 @@ fn handle_create(command: CreateCommand) -> ::anyhow::Result<TableDefinition> {
             column.data_type.as_str(),
             column.length
         );
-        file.write_all(line.as_bytes()).unwrap();
+        file.write_all(line.as_bytes())?;
     }
 
     Ok(command.table_definition)
@@ -43,7 +43,7 @@ fn read_tabledef(table_name: String) -> ::anyhow::Result<TableDefinition> {
         let parts: Vec<&str> = line_str.split(' ').collect();
         let col_def = ColumnDefinition {
             name: parts[0].to_string(),
-            data_type: Datatype::from_str(parts[1]).unwrap(),
+            data_type: Datatype::parse_from_str(parts[1])?,
             length: parts[2].parse::<u16>()?.into(),
         };
         column_defs.push(col_def);
@@ -60,10 +60,9 @@ fn handle_insert(command: InsertCommand) -> ::anyhow::Result<()> {
         .create(true)
         .write(true)
         .append(true)
-        .open(format!("./data/blobs/{}", command.table_name))
-        .unwrap();
+        .open(format!("./data/blobs/{}", command.table_name))?;
 
-    let tabledef = read_tabledef(command.table_name).unwrap();
+    let tabledef = read_tabledef(command.table_name)?;
 
     for col_def in &tabledef.column_defs {
         if let Some(insert_item) = command.items.get(&col_def.name) {
@@ -89,7 +88,7 @@ fn handle_insert(command: InsertCommand) -> ::anyhow::Result<()> {
 
 fn handle_select(command: SelectCommand) -> ::anyhow::Result<String> {
     let mut file = fs::File::open(format!("./data/blobs/{}", command.table_name))?;
-    let tabledef = read_tabledef(command.table_name).unwrap();
+    let tabledef = read_tabledef(command.table_name)?;
     let mut response = String::new();
 
     response += "| ";
