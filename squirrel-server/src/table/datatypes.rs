@@ -51,8 +51,11 @@ impl Datatype {
                 Ok(str_val)
             }
             Datatype::Integer => {
-                let val = data_val.first().unwrap();
-                Ok(format!("{}", val))
+                if let Some(val) = data_val.first() {
+                    Ok(format!("{}", val))
+                } else {
+                    Err(anyhow!("Unable to parse Integer"))
+                }
             }
         }
     }

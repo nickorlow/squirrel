@@ -139,28 +139,30 @@ fn run_command(query: String) -> ::anyhow::Result<String> {
     }
 }
 
-fn handle_client(mut stream: TcpStream) {
+fn handle_client(mut stream: TcpStream) -> ::anyhow::Result<()> {
     let mut data = [0_u8; BUFFER_SIZE];
 
     while match stream.read(&mut data) {
         Ok(_size) => {
-            let query_string = String::from_utf8(data.to_vec()).expect("A UTF-8 string");
-            let response: String = run_command(query_string).unwrap();
+            let query_string = String::from_utf8(data.to_vec())?;
+            let response: String = run_command(query_string)?;
 
             let response_data_size = response.len().to_le_bytes();
-            stream.write_all(&response_data_size).unwrap(); // send length of message
-            stream.write_all(response.as_bytes()).unwrap(); // send message
+            stream.write_all(&response_data_size)?; // send length of message
+            stream.write_all(response.as_bytes())?; // send message
             true
         }
         Err(_) => {
             println!(
                 "An error occurred, terminating connection with {}",
-                stream.peer_addr().unwrap()
+                stream.peer_addr()?
             );
-            stream.shutdown(Shutdown::Both).unwrap();
+            stream.shutdown(Shutdown::Both)?;
             false
         }
     } {}
+
+    Ok(())
 }
 
 fn main() -> std::io::Result<()> {
@@ -171,8 +173,9 @@ fn main() -> std::io::Result<()> {
     let listener = TcpListener::bind("0.0.0.0:5433")?;
 
     for stream in listener.incoming() {
-        thread::spawn(|| {
-            handle_client(stream.expect("A valid stream"));
+        thread::spawn(|| -> ::anyhow::Result<()> {
+            handle_client(stream?)?;
+            Ok(())
         });
     }
 

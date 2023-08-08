@@ -280,7 +280,7 @@ impl Command {
                     state = CreateParserState::ColumnDatatype;
                 }
                 CreateParserState::ColumnDatatype => {
-                    let dtype = Datatype::parse_from_str(token).unwrap();
+                    let dtype = Datatype::parse_from_str(token)?;
                     if dtype.has_len() {
                         state = CreateParserState::ColumnLength;
                     } else {
@@ -293,26 +293,30 @@ impl Command {
                     state = CreateParserState::ColumnDefinitionEnd;
                 }
                 CreateParserState::ColumnDefinitionEnd => {
-                    let column_def = ColumnDefinition {
-                        data_type: data_type.unwrap(),
-                        length,
-                        name: col_name,
-                    };
+                    if let Some(data_type_val) = data_type {
+                        let column_def = ColumnDefinition {
+                            data_type: data_type_val,
+                            length,
+                            name: col_name,
+                        };
 
-                    length = 0;
-                    col_name = String::new();
-                    data_type = None;
+                        length = 0;
+                        col_name = String::new();
+                        data_type = None;
 
-                    col_defs.push(column_def);
+                        col_defs.push(column_def);
 
-                    match token.as_str() {
-                        "," => {
-                            state = CreateParserState::ColumnName;
+                        match token.as_str() {
+                            "," => {
+                                state = CreateParserState::ColumnName;
+                            }
+                            ")" => {
+                                state = CreateParserState::Semicolon;
+                            }
+                            _ => return Err(anyhow!("Expected end")),
                         }
-                        ")" => {
-                            state = CreateParserState::Semicolon;
-                        }
-                        _ => return Err(anyhow!("Expected end")),
+                    } else {
+                        return Err(anyhow!("Could not find datatype for column {}", col_name));
                     }
                 }
                 CreateParserState::Semicolon => {
