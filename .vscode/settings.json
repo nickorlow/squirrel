@@ -1,8 +1,0 @@
-{
-    "rust-analyzer.linkedProjects": [
-        "./squirrel-server/Cargo.toml",
-        "./squirrel-client/Cargo.toml",
-        "./squirrel-server/Cargo.toml",
-        "./squirrel-server/Cargo.toml"
-    ]
-}

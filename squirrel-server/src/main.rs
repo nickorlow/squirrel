@@ -1,40 +1,123 @@
-use std::thread;
-use std::net::{TcpListener, TcpStream, Shutdown};
-use std::io::{Read, Write};
-use core::str::Split;
-use std::error::Error;
+use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{Shutdown, TcpListener, TcpStream};
+use std::thread;
 
 mod parser;
 pub use parser::command::Command;
 
 mod table;
-use parser::command::CreateCommand;
+use parser::command::{CreateCommand, InsertCommand, SelectCommand};
 pub use table::datatypes::Datatype;
-pub use table::table::TableDefinition;
+pub use table::table::{ColumnDefinition, TableDefinition};
+
+use crate::parser::command::InsertItem;
 
 const BUFFER_SIZE: usize = 500;
 
+fn handle_create(command: CreateCommand) -> ::anyhow::Result<TableDefinition> {
+    let mut file = fs::File::create(format!(
+        "./data/tabledefs/{}",
+        command.table_definition.name
+    ))?;
 
-/*
-CREATE TABLE [IF NOT EXISTS] table_name (
-   column1 datatype(length) column_contraint,
-   column2 datatype(length) column_contraint,
-   column3 datatype(length) column_contraint,
-   table_constraints
-);
- */
-fn handle_create(command: CreateCommand) -> Result<TableDefinition, String> {
-    println!("Creating table with name: {}", command.table_definition.name);
-    let mut file = fs::File::create(format!("./data/tabledefs/{}", command.table_definition.name)).unwrap();
-            
     for column in &command.table_definition.column_defs {
-        println!("creating col: {} {} {}", column.name, column.data_type.as_str(), column.length);
-        let line = format!("{} {} {} \n", column.name, column.data_type.as_str(), column.length);
+        let line = format!(
+            "{} {} {} \n",
+            column.name,
+            column.data_type.as_str(),
+            column.length
+        );
         file.write_all(line.as_bytes()).unwrap();
     }
 
     return Ok(command.table_definition);
+}
+
+fn read_tabledef(table_name: String) -> ::anyhow::Result<TableDefinition> {
+    let file = fs::File::open(format!("./data/tabledefs/{}", table_name))?;
+
+    let mut column_defs = vec![];
+
+    for line in BufReader::new(file).lines() {
+        let line_str = line?;
+        let parts: Vec<&str> = line_str.split(" ").collect();
+        let col_def = ColumnDefinition {
+            name: parts[0].to_string(),
+            data_type: Datatype::from_str(parts[1]).unwrap(),
+            length: parts[2].parse::<u16>()?.into(),
+        };
+        column_defs.push(col_def);
+    }
+
+    return Ok(TableDefinition {
+        name: table_name,
+        column_defs,
+    });
+}
+
+fn handle_insert(command: InsertCommand) -> ::anyhow::Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(true)
+        .open(format!("./data/blobs/{}", command.table_name))
+        .unwrap();
+
+    let tabledef = read_tabledef(command.table_name).unwrap();
+
+    for col_def in &tabledef.column_defs {
+        if let Some(insert_item) = command.items.get(&col_def.name) {
+            let bytes = col_def
+                .data_type
+                .to_bytes(insert_item.column_value.clone())?;
+            file.write_all(&bytes)?;
+            if bytes.len() < col_def.length {
+                let length = col_def.length - bytes.len();
+                let empty_bytes = vec![0; length];
+                file.write_all(&empty_bytes)?;
+            }
+        } else {
+            return Err(anyhow::anyhow!(
+                "ERROR: INSERT statement is missing data for column '{}'",
+                col_def.name
+            ));
+        }
+    }
+
+    return Ok(());
+}
+
+fn handle_select(command: SelectCommand) -> ::anyhow::Result<String> {
+    let mut file = fs::File::open(format!("./data/blobs/{}", command.table_name))?;
+    let tabledef = read_tabledef(command.table_name).unwrap();
+    let mut response = String::new();
+
+    response += "| ";
+    for col_def in &tabledef.column_defs {
+        response += format!("{} | ", col_def.name).as_str();
+    }
+    response += "\n";
+    response += "-----------\n";
+    let mut buf: Vec<u8> = vec![0; tabledef.get_byte_size()];
+    while file.read_exact(buf.as_mut_slice()).is_ok() {
+        response += "| ";
+        let mut idx = 0;
+        for col_def in &tabledef.column_defs {
+            let len = if col_def.length > 0 {
+                col_def.length
+            } else {
+                1
+            };
+            let str_val = col_def.data_type.from_bytes(&buf[idx..(idx + len)])?;
+            response += format!("{} | ", str_val).as_str();
+            idx += len;
+        }
+        response += "\n";
+    }
+
+    return Ok(response);
 }
 
 fn run_command(query: String) -> String {
@@ -44,60 +127,57 @@ fn run_command(query: String) -> String {
         return String::from("Slash commands are not yet supported in SQUIRREL");
     }
 
-    let command_result: Result<Command, String> = Command::from_string(query);
+    let command_result: ::anyhow::Result<Command> = Command::from_string(query);
 
     if command_result.is_ok() {
         let command: Command = command_result.unwrap();
         response = match command {
-            Command::Create(create_command) => { 
-                let result_result = handle_create(create_command); 
+            Command::Create(create_command) => {
+                let result_result = handle_create(create_command);
                 if result_result.is_err() {
-                    String::from("Error creating table.") 
+                    String::from("Error creating table.")
                 } else {
-                    String::from("Table created.") 
+                    String::from("Table created.")
                 }
             }
-            _ => { String::from("Invalid command") }
+            Command::Insert(insert_command) => {
+                let result = handle_insert(insert_command);
+                if result.is_err() {
+                    String::from(result.err().unwrap().to_string())
+                } else {
+                    String::from("Data inserted.")
+                }
+            }
+            Command::Select(select_command) => {
+                return handle_select(select_command).unwrap();
+            }
+            _ => String::from("Invalid command"),
         }
     } else {
-        response = command_result.err().unwrap();
+        response = command_result.err().unwrap().to_string();
     }
-    
+
     return response;
 }
 
 fn handle_client(mut stream: TcpStream) {
-    let mut data = [0 as u8; BUFFER_SIZE]; 
+    let mut data = [0 as u8; BUFFER_SIZE];
 
     while match stream.read(&mut data) {
         Ok(size) => {
-            let mut query_string = String::from_utf8(data.to_vec()).expect("A UTF-8 string");
-            println!("Received: {}", query_string);
+            let query_string = String::from_utf8(data.to_vec()).expect("A UTF-8 string");
+            let response: String = run_command(query_string);
 
-            let mut i = 0;
-            for c in query_string.chars() {
-                if c == ';' {
-                    query_string = query_string.get(0..i).unwrap().to_string();
-                    i = 0;
-                    break;
-                }
-                i += 1;
-            }
-
-            let response: String;
-            if i == 0 {
-                response = run_command(query_string);
-            } else {
-                response = String::from("No semicolon.");
-            }
-            
             let mut response_data_size = response.len().to_le_bytes();
             stream.write(&mut response_data_size).unwrap(); // send length of message
             stream.write(response.as_bytes()).unwrap(); // send message
             true
-        },
+        }
         Err(_) => {
-            println!("An error occurred, terminating connection with {}", stream.peer_addr().unwrap());
+            println!(
+                "An error occurred, terminating connection with {}",
+                stream.peer_addr().unwrap()
+            );
             stream.shutdown(Shutdown::Both).unwrap();
             false
         }
@@ -105,10 +185,10 @@ fn handle_client(mut stream: TcpStream) {
 }
 
 fn main() -> std::io::Result<()> {
-    fs::remove_dir_all("./data")?; 
-    fs::create_dir("./data")?;
-    fs::create_dir("./data/tabledefs")?;
-    fs::create_dir("./data/blobs")?;
+    //fs::remove_dir_all("./data")?;
+    let _ensure_data_exists = fs::create_dir("./data");
+    let _ensure_tabledefs_exists = fs::create_dir("./data/tabledefs");
+    let _ensure_blob_exists = fs::create_dir("./data/blobs");
     let listener = TcpListener::bind("0.0.0.0:5433")?;
 
     for stream in listener.incoming() {
@@ -117,6 +197,83 @@ fn main() -> std::io::Result<()> {
             ()
         });
     }
+
+    Ok(())
+}
+
+#[test]
+fn insert_statement() -> anyhow::Result<()> {
+    let empty_statement = "";
+    let regular_statement = "INSERT INTO users (id, name) VALUES (1, \"Test\");";
+    let extra_ws_statement =
+        "INSERT    INTO     users     (id, name)      VALUES      (1, \"Test\")    ;";
+    let min_ws_statement = "INSERT INTO users(id, name) VALUES(1, \"Test\");";
+    let str_comma_statement = "INSERT INTO users(id, name) VALUES(1, \"Firstname, Lastname\");";
+
+    let expected_output = Command::Insert(InsertCommand {
+        table_name: "users".to_string(),
+        items: HashMap::from([
+            (
+                "id".to_string(),
+                InsertItem {
+                    column_name: "id".to_string(),
+                    column_value: "1".to_string(),
+                },
+            ),
+            (
+                "name".to_string(),
+                InsertItem {
+                    column_name: "name".to_string(),
+                    column_value: "\"Test\"".to_string(),
+                },
+            ),
+        ]),
+    });
+
+    let expected_output_comma = Command::Insert(InsertCommand {
+        table_name: "users".to_string(),
+        items: HashMap::from([
+            (
+                "id".to_string(),
+                InsertItem {
+                    column_name: "id".to_string(),
+                    column_value: "1".to_string(),
+                },
+            ),
+            (
+                "name".to_string(),
+                InsertItem {
+                    column_name: "name".to_string(),
+                    column_value: "\"Firstname, Lastname\"".to_string(),
+                },
+            ),
+        ]),
+    });
+
+    assert_eq!(
+        Command::from_string(String::from(empty_statement)).is_ok(),
+        false
+    );
+
+    assert_eq!(
+        Command::from_string(String::from(regular_statement))?,
+        expected_output
+    );
+
+    assert_eq!(
+        Command::from_string(String::from(extra_ws_statement))?,
+        expected_output
+    );
+
+    assert_eq!(
+        Command::from_string(String::from(min_ws_statement))?,
+        expected_output
+    );
+
+    assert_eq!(
+        Command::from_string(String::from(str_comma_statement))?,
+        expected_output_comma
+    );
 
     Ok(())
 }
