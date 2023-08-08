@@ -127,14 +127,29 @@ fn run_command(query: String) -> ::anyhow::Result<String> {
 
     match command {
         Command::Create(create_command) => {
-            handle_create(create_command)?;
-            Ok(String::from("Table Created"))
+            let result = handle_create(create_command);
+            if result.is_ok() {
+                Ok(String::from("Table Created"))
+            } else {
+                Ok(result.err().unwrap().to_string())
+            }
         }
         Command::Insert(insert_command) => {
-            handle_insert(insert_command)?;
-            Ok(String::from("Row Inserted"))
+            let result = handle_insert(insert_command);
+            if result.is_ok() {
+                Ok(String::from("Data Inserted"))
+            } else {
+                Ok(result.err().unwrap().to_string())
+            }
         }
-        Command::Select(select_command) => handle_select(select_command),
+        Command::Select(select_command) => {
+            let result = handle_select(select_command);
+            if result.is_ok() {
+                Ok(result?)
+            } else {
+                Ok(result.err().unwrap().to_string())
+            }
+        }
         _ => Err(anyhow!("Invalid command")),
     }
 }
