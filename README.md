@@ -1,6 +1,8 @@
 # SQUIRREL
 SQL Query Util-Izing Rust's Reliable and Efficient Logic
 
+![Demo showing data insertation into SQUIRREL](https://github.com/nickorlow/squirrel/blob/main/.meta/images/demo_data_insert.png?raw=true)
+
 ---
 
 ## About
