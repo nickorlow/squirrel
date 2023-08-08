@@ -1,4 +1,3 @@
-use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
@@ -11,8 +10,6 @@ mod table;
 use parser::command::{CreateCommand, InsertCommand, SelectCommand};
 pub use table::datatypes::Datatype;
 pub use table::table::{ColumnDefinition, TableDefinition};
-
-use crate::parser::command::InsertItem;
 
 const BUFFER_SIZE: usize = 500;
 
@@ -122,7 +119,7 @@ fn handle_select(command: SelectCommand) -> ::anyhow::Result<String> {
 
 fn run_command(query: String) -> String {
     let response: String;
-    if query.chars().nth(0).unwrap() == '\\' {
+    if query.starts_with('\\') {
         // handle PSQL's slash commands e.g.: \dt \d
         return String::from("Slash commands are not yet supported in SQUIRREL");
     }
@@ -143,7 +140,7 @@ fn run_command(query: String) -> String {
             Command::Insert(insert_command) => {
                 let result = handle_insert(insert_command);
                 if result.is_err() {
-                    String::from(result.err().unwrap().to_string())
+                    result.err().unwrap().to_string()
                 } else {
                     String::from("Data inserted.")
                 }
@@ -161,16 +158,16 @@ fn run_command(query: String) -> String {
 }
 
 fn handle_client(mut stream: TcpStream) {
-    let mut data = [0 as u8; BUFFER_SIZE];
+    let mut data = [0_u8; BUFFER_SIZE];
 
     while match stream.read(&mut data) {
-        Ok(size) => {
+        Ok(_size) => {
             let query_string = String::from_utf8(data.to_vec()).expect("A UTF-8 string");
             let response: String = run_command(query_string);
 
-            let mut response_data_size = response.len().to_le_bytes();
-            stream.write(&mut response_data_size).unwrap(); // send length of message
-            stream.write(response.as_bytes()).unwrap(); // send message
+            let response_data_size = response.len().to_le_bytes();
+            stream.write_all(&response_data_size).unwrap(); // send length of message
+            stream.write_all(response.as_bytes()).unwrap(); // send message
             true
         }
         Err(_) => {
@@ -194,7 +191,6 @@ fn main() -> std::io::Result<()> {
     for stream in listener.incoming() {
         thread::spawn(|| {
             handle_client(stream.expect("A valid stream"));
-            ()
         });
     }
 

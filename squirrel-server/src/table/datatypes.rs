@@ -33,11 +33,11 @@ impl Datatype {
                 // Remove dquotes
                 str_bytes.remove(0);
                 str_bytes.remove(str_bytes.len() - 1);
-                return Ok(str_bytes);
+                Ok(str_bytes)
             }
             Datatype::Integer => {
                 let val = data_val.parse::<u8>()?;
-                return Ok(vec![val]);
+                Ok(vec![val])
             }
         }
     }
@@ -46,11 +46,11 @@ impl Datatype {
         match self {
             Datatype::CharacterVarying => {
                 let str_val = String::from_utf8(data_val.to_vec())?;
-                return Ok(str_val);
+                Ok(str_val)
             }
             Datatype::Integer => {
                 let val = data_val.first().unwrap();
-                return Ok(format!("{}", val));
+                Ok(format!("{}", val))
             }
         }
     }

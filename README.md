@@ -8,11 +8,17 @@ This is a SQL database written in Rust. It will be based off of (and hopefully b
 
 ## Feature roadmap
 
-[ ] Table creation via CREATE with varchar & integer datatype
+[X] CREATE TABLE with varchar & integer datatypes
 
-[ ] SELECT * query 
+[X] INSERT INTO (non-batched)
+
+[X] SELECT * query 
+
+[ ] DELETE command
 
 [ ] SELECT (filtered columns) query 
+
+[ ] WHERE clause for SELECT and DELETE
 
 [ ] Primary Keys via B+ Tree
 

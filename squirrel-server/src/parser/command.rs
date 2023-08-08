@@ -78,7 +78,7 @@ pub fn tokenizer(text: String) -> Vec<String> {
         }
 
         if !in_quotes && parts.contains(&cur_char) {
-            if cur_str.len() != 0 {
+            if !cur_str.is_empty() {
                 tokens.push(cur_str);
                 cur_str = String::new();
             }
@@ -90,7 +90,7 @@ pub fn tokenizer(text: String) -> Vec<String> {
         }
     }
 
-    return tokens;
+    tokens
 }
 
 impl Command {
@@ -204,7 +204,7 @@ impl Command {
             }
         }
 
-        return Err(anyhow!("Unexpected end of input"));
+        Err(anyhow!("Unexpected end of input"))
     }
 
     fn parse_select_command(tokens: &mut Vec<String>) -> ::anyhow::Result<Command> {
@@ -243,7 +243,7 @@ impl Command {
             }
         }
 
-        return Err(anyhow!("Unexpected end of input"));
+        Err(anyhow!("Unexpected end of input"))
     }
 
     fn parse_create_command(tokens: &mut Vec<String>) -> ::anyhow::Result<Command> {
@@ -280,7 +280,7 @@ impl Command {
                     state = CreateParserState::FindColumnDatatype;
                 }
                 CreateParserState::FindColumnDatatype => {
-                    let dtype = Datatype::from_str(&token).unwrap();
+                    let dtype = Datatype::from_str(token).unwrap();
                     if dtype.has_len() {
                         state = CreateParserState::FindColumnLength;
                     } else {
@@ -330,7 +330,7 @@ impl Command {
             }
         }
 
-        return Err(anyhow!("Unexpected end of input"));
+        Err(anyhow!("Unexpected end of input"))
     }
 
     pub fn from_string(command_str: String) -> ::anyhow::Result<Command> {
@@ -344,6 +344,7 @@ impl Command {
                 _ => Err(anyhow!("Unknown command '{}'", token)),
             };
         }
-        return Err(anyhow!("Unexpected end of statement"));
+
+        Err(anyhow!("Unexpected end of statement"))
     }
 }
