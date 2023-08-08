@@ -3,8 +3,6 @@ SQL Query Util-Izing Rust's Reliable and Efficient Logic
 
 ![Demo showing data insertation into SQUIRREL](https://github.com/nickorlow/squirrel/blob/main/.meta/images/demo_data_insert.png?raw=true)
 
----
-
 ## About
 This is a SQL database written in Rust. It will be based off of (and hopefully be made wire-compatible with) PostgreSQL's syntax.
 
