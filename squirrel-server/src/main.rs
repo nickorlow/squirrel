@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
@@ -29,7 +30,7 @@ fn handle_create(command: CreateCommand) -> ::anyhow::Result<TableDefinition> {
         file.write_all(line.as_bytes()).unwrap();
     }
 
-    return Ok(command.table_definition);
+    Ok(command.table_definition)
 }
 
 fn read_tabledef(table_name: String) -> ::anyhow::Result<TableDefinition> {
@@ -39,7 +40,7 @@ fn read_tabledef(table_name: String) -> ::anyhow::Result<TableDefinition> {
 
     for line in BufReader::new(file).lines() {
         let line_str = line?;
-        let parts: Vec<&str> = line_str.split(" ").collect();
+        let parts: Vec<&str> = line_str.split(' ').collect();
         let col_def = ColumnDefinition {
             name: parts[0].to_string(),
             data_type: Datatype::from_str(parts[1]).unwrap(),
@@ -48,10 +49,10 @@ fn read_tabledef(table_name: String) -> ::anyhow::Result<TableDefinition> {
         column_defs.push(col_def);
     }
 
-    return Ok(TableDefinition {
+    Ok(TableDefinition {
         name: table_name,
         column_defs,
-    });
+    })
 }
 
 fn handle_insert(command: InsertCommand) -> ::anyhow::Result<()> {
@@ -83,7 +84,7 @@ fn handle_insert(command: InsertCommand) -> ::anyhow::Result<()> {
         }
     }
 
-    return Ok(());
+    Ok(())
 }
 
 fn handle_select(command: SelectCommand) -> ::anyhow::Result<String> {
@@ -114,47 +115,29 @@ fn handle_select(command: SelectCommand) -> ::anyhow::Result<String> {
         response += "\n";
     }
 
-    return Ok(response);
+    Ok(response)
 }
 
-fn run_command(query: String) -> String {
-    let response: String;
+fn run_command(query: String) -> ::anyhow::Result<String> {
     if query.starts_with('\\') {
         // handle PSQL's slash commands e.g.: \dt \d
-        return String::from("Slash commands are not yet supported in SQUIRREL");
+        return Err(anyhow!("Slash commands are not yet supported in SQUIRREL"));
     }
 
-    let command_result: ::anyhow::Result<Command> = Command::from_string(query);
+    let command: Command = Command::from_string(query)?;
 
-    if command_result.is_ok() {
-        let command: Command = command_result.unwrap();
-        response = match command {
-            Command::Create(create_command) => {
-                let result_result = handle_create(create_command);
-                if result_result.is_err() {
-                    String::from("Error creating table.")
-                } else {
-                    String::from("Table created.")
-                }
-            }
-            Command::Insert(insert_command) => {
-                let result = handle_insert(insert_command);
-                if result.is_err() {
-                    result.err().unwrap().to_string()
-                } else {
-                    String::from("Data inserted.")
-                }
-            }
-            Command::Select(select_command) => {
-                return handle_select(select_command).unwrap();
-            }
-            _ => String::from("Invalid command"),
+    match command {
+        Command::Create(create_command) => {
+            handle_create(create_command)?;
+            Ok(String::from("Table Created"))
         }
-    } else {
-        response = command_result.err().unwrap().to_string();
+        Command::Insert(insert_command) => {
+            handle_insert(insert_command)?;
+            Ok(String::from("Row Inserted"))
+        }
+        Command::Select(select_command) => handle_select(select_command),
+        _ => Err(anyhow!("Invalid command")),
     }
-
-    return response;
 }
 
 fn handle_client(mut stream: TcpStream) {
@@ -163,7 +146,7 @@ fn handle_client(mut stream: TcpStream) {
     while match stream.read(&mut data) {
         Ok(_size) => {
             let query_string = String::from_utf8(data.to_vec()).expect("A UTF-8 string");
-            let response: String = run_command(query_string);
+            let response: String = run_command(query_string).unwrap();
 
             let response_data_size = response.len().to_le_bytes();
             stream.write_all(&response_data_size).unwrap(); // send length of message

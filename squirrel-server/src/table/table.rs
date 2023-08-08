@@ -26,6 +26,6 @@ impl TableDefinition {
                 1
             };
         }
-        return sum;
+        sum
     }
 }
