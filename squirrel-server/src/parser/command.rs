@@ -9,12 +9,17 @@ pub enum Command {
     Select(SelectCommand),
     Create(CreateCommand),
     Insert(InsertCommand),
-    Delete,
+    Delete(DeleteCommand),
 }
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct CreateCommand {
     pub table_definition: TableDefinition,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct DeleteCommand {
+    pub table_name: String,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -26,7 +31,7 @@ pub struct InsertCommand {
 #[derive(Debug, Eq, PartialEq)]
 pub struct SelectCommand {
     pub table_name: String,
-    // TODO Later: pub column_names: Vec<String>,
+    pub column_names: Vec<String>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -47,7 +52,13 @@ enum CreateParserState {
 }
 
 enum SelectParserState {
-    Wildcard, // Temporary, col selection coming soon
+    ColumnName,
+    ColumnNameCommaOrFrom,
+    TableName,
+    Semicolon,
+}
+
+enum DeleteParserState {
     FromKeyword,
     TableName,
     Semicolon,
@@ -208,25 +219,29 @@ impl Command {
     }
 
     fn parse_select_command(tokens: &mut Vec<String>) -> ::anyhow::Result<Command> {
-        let mut state: SelectParserState = SelectParserState::Wildcard;
+        let mut state: SelectParserState = SelectParserState::ColumnName;
 
         // intermediate tmp vars
         let mut table_name = String::new();
+        let mut column_names: Vec<String> = vec![];
 
         while let Some(token) = &tokens.pop() {
             match state {
-                SelectParserState::Wildcard => {
-                    if token != "*" {
-                        return Err(anyhow!("Expected to find selection at or near '{}' (SQUIRREL does not support column seletion)", token));
+                SelectParserState::ColumnName => {
+                    if token.eq_ignore_ascii_case("FROM") {
+                        return Err(anyhow!("Did not expect FROM keyword at or near '{}'", token));
                     } else {
-                        state = SelectParserState::FromKeyword;
+                        column_names.push(token.clone());
+                        state = SelectParserState::ColumnNameCommaOrFrom;
                     }
                 }
-                SelectParserState::FromKeyword => {
-                    if !token.eq_ignore_ascii_case("FROM") {
-                        return Err(anyhow!("Expected to find FROM at or near '{}'", token));
-                    } else {
+                SelectParserState::ColumnNameCommaOrFrom => {
+                    if token == "," {
+                        state = SelectParserState::ColumnName;
+                    } else if token.eq_ignore_ascii_case("FROM") {
                         state = SelectParserState::TableName;
+                    } else {
+                        return Err(anyhow!("Expected comma or FROM keyword at or near '{}'", token));
                     }
                 }
                 SelectParserState::TableName => {
@@ -237,7 +252,40 @@ impl Command {
                     if token != ";" {
                         return Err(anyhow!("Expected semicolon at or near '{}'", token));
                     } else {
-                        return Ok(Command::Select(SelectCommand { table_name }));
+                        return Ok(Command::Select(SelectCommand { table_name, column_names }));
+                    }
+                }
+            }
+        }
+
+        Err(anyhow!("Unexpected end of input"))
+    }
+
+
+    fn parse_delete_command(tokens: &mut Vec<String>) -> ::anyhow::Result<Command> {
+        let mut state: DeleteParserState = DeleteParserState::FromKeyword;
+
+        // intermediate tmp vars
+        let mut table_name = String::new();
+
+        while let Some(token) = &tokens.pop() {
+            match state {
+                DeleteParserState::FromKeyword => {
+                    if !token.eq_ignore_ascii_case("FROM") {
+                        return Err(anyhow!("Expected FROM keyword at or near '{}'", token));
+                    } else {
+                        state = DeleteParserState::TableName;
+                    }
+                }
+                DeleteParserState::TableName => {
+                    table_name = token.to_string();
+                    state = DeleteParserState::Semicolon;
+                }
+                DeleteParserState::Semicolon => {
+                    if token != ";" {
+                        return Err(anyhow!("Expected semicolon at or near '{}'", token));
+                    } else {
+                        return Ok(Command::Delete(DeleteCommand { table_name }));
                     }
                 }
             }
@@ -345,6 +393,7 @@ impl Command {
                 "CREATE" => Self::parse_create_command(&mut tokens),
                 "INSERT" => Self::parse_insert_command(&mut tokens),
                 "SELECT" => Self::parse_select_command(&mut tokens),
+                "DELETE" => Self::parse_delete_command(&mut tokens),
                 _ => Err(anyhow!("Unknown command '{}'", token)),
             };
         }

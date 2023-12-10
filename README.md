@@ -14,9 +14,9 @@ This is a SQL database written in Rust. It will be based off of (and hopefully b
 
 [X] SELECT * query 
 
-[ ] DELETE command
+[x] SELECT (filtered columns) query 
 
-[ ] SELECT (filtered columns) query 
+[x] DELETE command
 
 [ ] WHERE clause for SELECT and DELETE
 

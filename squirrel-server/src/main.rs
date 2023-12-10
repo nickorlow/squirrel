@@ -3,12 +3,13 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::thread;
+use std::collections::HashMap;
 
 mod parser;
 pub use parser::command::Command;
 
 mod table;
-use parser::command::{CreateCommand, InsertCommand, SelectCommand};
+use parser::command::{CreateCommand, InsertCommand, SelectCommand, DeleteCommand};
 pub use table::datatypes::Datatype;
 pub use table::table_definition::{ColumnDefinition, TableDefinition};
 
@@ -86,30 +87,79 @@ fn handle_insert(command: InsertCommand) -> ::anyhow::Result<()> {
     Ok(())
 }
 
+fn handle_delete(command: DeleteCommand) -> ::anyhow::Result<String> {
+    let mut file = fs::File::open(format!("./data/blobs/{}", command.table_name))?;
+    let tabledef = read_tabledef(command.table_name.clone())?;
+    let mut buf: Vec<u8> = vec![0; tabledef.get_byte_size()];
+    let mut row_count: usize = 0;
+
+    while file.read_exact(buf.as_mut_slice()).is_ok() {
+        row_count += 1;
+    }
+
+    let _ = fs::remove_file(format!("./data/blobs/{}", command.table_name));
+
+    let _ = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(true)
+        .open(format!("./data/blobs/{}", command.table_name))?;
+
+    return Ok(format!("{} Rows Deleted", row_count));
+}
+
 fn handle_select(command: SelectCommand) -> ::anyhow::Result<String> {
     let mut file = fs::File::open(format!("./data/blobs/{}", command.table_name))?;
     let tabledef = read_tabledef(command.table_name)?;
     let mut response = String::new();
+    let mut column_names: Vec<String> = vec![];
+
+    for col_name in &command.column_names {
+        if col_name == "*" {
+            for col_defs in &tabledef.column_defs {
+                column_names.push(col_defs.name.clone());
+            }
+        } else {
+            column_names.push(col_name.clone());
+        }
+    }
 
     response += "| ";
-    for col_def in &tabledef.column_defs {
-        response += format!("{} | ", col_def.name).as_str();
+    for col_name in &column_names {
+        response += format!("{} | ", col_name).as_str();
     }
     response += "\n";
     response += "-----------\n";
     let mut buf: Vec<u8> = vec![0; tabledef.get_byte_size()];
+
+    let mut table: HashMap<String, Vec<String>> = HashMap::new();
+    let mut num_rows: usize = 0;
+
+    for col_name in &column_names {
+        table.insert(col_name.clone(), vec![]);
+    }
+
     while file.read_exact(buf.as_mut_slice()).is_ok() {
-        response += "| ";
-        let mut idx = 0;
+        let mut idx: usize = 0;
         for col_def in &tabledef.column_defs {
             let len = if col_def.length > 0 {
                 col_def.length
             } else {
                 1
             };
-            let str_val = col_def.data_type.from_bytes(&buf[idx..(idx + len)])?;
-            response += format!("{} | ", str_val).as_str();
+            if column_names.iter().any(|col_name| &col_def.name == col_name) { 
+                let str_val = col_def.data_type.from_bytes(&buf[idx..(idx + len)])?;
+                table.get_mut(&col_def.name).unwrap().push(str_val);
+            }
             idx += len;
+        }
+        num_rows += 1;
+    }
+
+    for i in 0..num_rows { 
+        response += "| ";
+        for col_name in &column_names {
+            response += format!("{} | ", table.get(col_name).unwrap()[i]).as_str();
         }
         response += "\n";
     }
@@ -124,6 +174,8 @@ fn run_command(query: String) -> ::anyhow::Result<String> {
     }
 
     let command: Command = Command::from_string(query)?;
+
+    println!("Parsed Command: {:?}", command);
 
     match command {
         Command::Create(create_command) => {
@@ -150,7 +202,14 @@ fn run_command(query: String) -> ::anyhow::Result<String> {
                 Ok(result.err().unwrap().to_string())
             }
         }
-        _ => Err(anyhow!("Invalid command")),
+        Command::Delete(delete_command) => {
+            let result = handle_delete(delete_command);
+            if result.is_ok() {
+                Ok(result?)
+            } else {
+                Ok(result.err().unwrap().to_string())
+            }
+        }
     }
 }
 
@@ -160,8 +219,13 @@ fn handle_client(mut stream: TcpStream) -> ::anyhow::Result<()> {
     while match stream.read(&mut data) {
         Ok(_size) => {
             let query_string = String::from_utf8(data.to_vec())?;
-            let response: String = run_command(query_string)?;
+            let response_res: ::anyhow::Result<String> = run_command(query_string);
 
+            let response = match response_res {
+                Ok(result) => result,
+                Err(err_msg) => String::from(format!("Error: {}", err_msg.to_string()))
+            };
+            
             let response_data_size = response.len().to_le_bytes();
             stream.write_all(&response_data_size)?; // send length of message
             stream.write_all(response.as_bytes())?; // send message
