@@ -4,12 +4,13 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::thread;
 use std::collections::HashMap;
+use std::cmp;
 
 mod parser;
 pub use parser::command::Command;
 
 mod table;
-use parser::command::{CreateCommand, InsertCommand, SelectCommand, DeleteCommand};
+use parser::command::{CreateCommand, InsertCommand, SelectCommand, DeleteCommand, LogicExpression, InsertItem, LogicValue};
 pub use table::datatypes::Datatype;
 pub use table::table_definition::{ColumnDefinition, TableDefinition};
 
@@ -93,17 +94,40 @@ fn handle_delete(command: DeleteCommand) -> ::anyhow::Result<String> {
     let mut buf: Vec<u8> = vec![0; tabledef.get_byte_size()];
     let mut row_count: usize = 0;
 
-    while file.read_exact(buf.as_mut_slice()).is_ok() {
-        row_count += 1;
-    }
-
-    let _ = fs::remove_file(format!("./data/blobs/{}", command.table_name));
-
-    let _ = fs::OpenOptions::new()
+    let mut new_file = fs::OpenOptions::new()
         .create(true)
         .write(true)
         .append(true)
-        .open(format!("./data/blobs/{}", command.table_name))?;
+        .open(format!("./data/blobs/{}_new", command.table_name))?;
+
+    while file.read_exact(buf.as_mut_slice()).is_ok() {
+        let mut row_data: HashMap<String, LogicValue> = HashMap::new();
+        let mut idx: usize = 0;
+        if let Some(ref le) = command.logic_expression {
+            let mut logic_expr = le.clone();
+            for col_def in &tabledef.column_defs {
+                let len = if col_def.length > 0 {
+                    col_def.length
+                } else {
+                    1
+                };
+                let str_val = col_def.data_type.from_bytes(&buf[idx..(idx + len)])?;
+                idx += len;
+                row_data.insert(col_def.name.clone(), LogicValue::from_string(str_val)?); 
+            }
+            idx = 0;
+            logic_expr.fill_values(row_data);
+            if !logic_expr.evaluate()? {
+                new_file.write_all(&buf)?;
+                continue;
+            }
+        }
+        row_count += 1;
+    }
+    new_file.flush()?;
+
+    let _ = fs::remove_file(format!("./data/blobs/{}", command.table_name))?;
+    let _ = fs::rename(format!("./data/blobs/{}_new", command.table_name), format!("./data/blobs/{}", command.table_name))?;
 
     return Ok(format!("{} Rows Deleted", row_count));
 }
@@ -124,15 +148,10 @@ fn handle_select(command: SelectCommand) -> ::anyhow::Result<String> {
         }
     }
 
-    response += "| ";
-    for col_name in &column_names {
-        response += format!("{} | ", col_name).as_str();
-    }
-    response += "\n";
-    response += "-----------\n";
     let mut buf: Vec<u8> = vec![0; tabledef.get_byte_size()];
 
     let mut table: HashMap<String, Vec<String>> = HashMap::new();
+    let mut longest_cols: HashMap<String, usize> = HashMap::new();
     let mut num_rows: usize = 0;
 
     for col_name in &column_names {
@@ -141,6 +160,26 @@ fn handle_select(command: SelectCommand) -> ::anyhow::Result<String> {
 
     while file.read_exact(buf.as_mut_slice()).is_ok() {
         let mut idx: usize = 0;
+        let mut row_data: HashMap<String, LogicValue> = HashMap::new();
+        if let Some(ref le) = command.logic_expression {
+            let mut logic_expr = le.clone();
+            for col_def in &tabledef.column_defs {
+                let len = if col_def.length > 0 {
+                    col_def.length
+                } else {
+                    1
+                };
+                let str_val = col_def.data_type.from_bytes(&buf[idx..(idx + len)])?;
+                idx += len;
+                row_data.insert(col_def.name.clone(), LogicValue::from_string(str_val)?); 
+            }
+            idx = 0;
+            logic_expr.fill_values(row_data);
+            if !logic_expr.evaluate()? {
+                continue;
+            }
+        }
+
         for col_def in &tabledef.column_defs {
             let len = if col_def.length > 0 {
                 col_def.length
@@ -148,18 +187,36 @@ fn handle_select(command: SelectCommand) -> ::anyhow::Result<String> {
                 1
             };
             if column_names.iter().any(|col_name| &col_def.name == col_name) { 
-                let str_val = col_def.data_type.from_bytes(&buf[idx..(idx + len)])?;
-                table.get_mut(&col_def.name).unwrap().push(str_val);
+                let str_val = col_def.data_type.from_bytes(&buf[idx..(idx + len)])?.trim_matches(char::from(0)).to_string();
+                table.get_mut(&col_def.name).unwrap().push(str_val.clone());
+                longest_cols.entry(col_def.name.clone()).and_modify(|val| *val = cmp::max(*val, str_val.len())).or_insert(str_val.len());
             }
             idx += len;
         }
         num_rows += 1;
     }
 
+
+
+    // construct table string
+    response += "| ";
+    for col_name in &column_names {
+        longest_cols.entry(col_name.clone()).and_modify(|val| *val = cmp::max(*val, col_name.len())).or_insert(col_name.len());
+        response += format!("{:0width$} | ", col_name, width = longest_cols.get(col_name).unwrap()).as_str();
+    }
+    let mut total_length: usize = 1;
+    for (col_name, max_len) in longest_cols.clone() {
+        total_length += max_len + 3;
+    }
+    response += "\n";
+    for i in 0..total_length {
+        response += "-";
+    }
+    response += "\n";
     for i in 0..num_rows { 
         response += "| ";
         for col_name in &column_names {
-            response += format!("{} | ", table.get(col_name).unwrap()[i]).as_str();
+            response += format!("{:0width$} | ", table.get(col_name).unwrap()[i], width = longest_cols.get(col_name).unwrap()).as_str();
         }
         response += "\n";
     }
@@ -262,6 +319,40 @@ fn main() -> std::io::Result<()> {
 }
 
 #[test]
+fn logical_expression() -> anyhow::Result<()> {
+    assert_eq!(Command::le_from_string(String::from("1 < 5")).unwrap().evaluate().unwrap(), true);
+    assert_eq!(Command::le_from_string(String::from("1 > 5")).unwrap().evaluate().unwrap(), false);
+    assert_eq!(Command::le_from_string(String::from("1 <= 5")).unwrap().evaluate().unwrap(), true);
+    assert_eq!(Command::le_from_string(String::from("1 >= 5")).unwrap().evaluate().unwrap(), false);
+    assert_eq!(Command::le_from_string(String::from("5 >= 5")).unwrap().evaluate().unwrap(), true);
+    assert_eq!(Command::le_from_string(String::from("5 <= 5")).unwrap().evaluate().unwrap(), true);
+    assert_eq!(Command::le_from_string(String::from("5 = 5")).unwrap().evaluate().unwrap(), true);
+    assert_eq!(Command::le_from_string(String::from("5 AND 5")).unwrap().evaluate().is_ok(), false);
+    assert_eq!(Command::le_from_string(String::from("5 OR 5")).unwrap().evaluate().is_ok(), false);
+
+    assert_eq!(Command::le_from_string(String::from("'Test' = 'Test'")).unwrap().evaluate().unwrap(), true);
+    assert_eq!(Command::le_from_string(String::from("'Test' = 'Text'")).unwrap().evaluate().unwrap(), false);
+    assert_eq!(Command::le_from_string(String::from("'Test' <= 'Test'")).unwrap().evaluate().is_ok(), false);
+    assert_eq!(Command::le_from_string(String::from("'Test' >= 'Test'")).unwrap().evaluate().is_ok(), false);
+    assert_eq!(Command::le_from_string(String::from("'Test' < 'Test'")).unwrap().evaluate().is_ok(), false);
+    assert_eq!(Command::le_from_string(String::from("'Test' > 'Test'")).unwrap().evaluate().is_ok(), false);
+    assert_eq!(Command::le_from_string(String::from("'Test' AND 'Test'")).unwrap().evaluate().is_ok(), false);
+    assert_eq!(Command::le_from_string(String::from("'Test' OR 'Test'")).unwrap().evaluate().is_ok(), false);
+
+    assert_eq!(Command::le_from_string(String::from("'Test' < 5")).unwrap().evaluate().is_ok(), false);
+    assert_eq!(Command::le_from_string(String::from("'Test' > 5")).unwrap().evaluate().is_ok(), false);
+    assert_eq!(Command::le_from_string(String::from("'Test' <= 5")).unwrap().evaluate().is_ok(), false);
+    assert_eq!(Command::le_from_string(String::from("'Test' >= 5")).unwrap().evaluate().is_ok(), false);
+    assert_eq!(Command::le_from_string(String::from("'Test' >= 5")).unwrap().evaluate().is_ok(), false);
+    assert_eq!(Command::le_from_string(String::from("'Test' <= 5")).unwrap().evaluate().is_ok(), false);
+    assert_eq!(Command::le_from_string(String::from("'Test' = 5")).unwrap().evaluate().is_ok(), false);
+    assert_eq!(Command::le_from_string(String::from("'Test' AND 5")).unwrap().evaluate().is_ok(), false);
+    assert_eq!(Command::le_from_string(String::from("'Test' OR 5")).unwrap().evaluate().is_ok(), false);
+
+    Ok(())
+}
+
+#[test]
 fn insert_statement() -> anyhow::Result<()> {
     let empty_statement = "";
     let regular_statement = "INSERT INTO users (id, name) VALUES (1, \"Test\");";
@@ -334,6 +425,7 @@ fn insert_statement() -> anyhow::Result<()> {
         Command::from_string(String::from(str_comma_statement))?,
         expected_output_comma
     );
+
 
     Ok(())
 }

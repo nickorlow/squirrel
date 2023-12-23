@@ -18,7 +18,19 @@ This is a SQL database written in Rust. It will be based off of (and hopefully b
 
 [x] DELETE command
 
-[ ] WHERE clause for SELECT and DELETE
+[x] WHERE clause for SELECT and DELETE
+
+[ ] Create squirrel-core library for shared code between client & server
+
+[ ] Update parser to use common logic to identify 'objects' (i.e function calls, column references, and variables) 
+
+[ ] Move parsing to client
+
+[ ] Create better logging
+
+[ ] UPDATE command
+
+[ ] Prune deleted records from disk
 
 [ ] Primary Keys via B+ Tree
 

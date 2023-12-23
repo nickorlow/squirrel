@@ -6,13 +6,15 @@ fn main() {
     match TcpStream::connect("localhost:5433") {
         Ok(mut stream) => {
             println!("Connected to Database");
-
             loop {
                 print!("SQUIRREL: ");
                 io::stdout().flush().unwrap();
 
                 let mut msg_str = String::new();
-                std::io::stdin().read_line(&mut msg_str).unwrap();
+                let bytes = std::io::stdin().read_line(&mut msg_str).unwrap();
+                if bytes == 0 {
+                    break;
+                }
                 let msg = msg_str.as_bytes();
 
                 stream.write(msg).unwrap();
@@ -32,4 +34,5 @@ fn main() {
             println!("Failed to connect: {}", e);
         }
     }
+    println!("Goodbye!");
 }
