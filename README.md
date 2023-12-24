@@ -28,6 +28,10 @@ This is a SQL database written in Rust. It will be based off of (and hopefully b
 
 [ ] Create better logging
 
+[ ] Unify parser and datatype logic
+
+[ ] Improve organization on command execution logic
+
 [ ] UPDATE command
 
 [ ] Prune deleted records from disk
