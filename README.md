@@ -22,7 +22,7 @@ This is a SQL database written in Rust. It will be based off of (and hopefully b
 
 [x] Create squirrel-core library for shared code between client & server
 
-[x] Update parser to use common logic to identify 'objects' (i.e function calls, column references, and variables) 
+[x] Update parser to use common logic to identify ValueExpressions (i.e function calls, column references, and variables) 
 
 [ ] Move parsing to client
 
