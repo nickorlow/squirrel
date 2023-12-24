@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::mem;
 
-use crate::table::table_definition::ColumnDefinition;
-use crate::{Datatype, TableDefinition};
+use crate::table::table_definition::{TableDefinition, ColumnDefinition};
+use crate::table::datatypes::{Datatype};
 use anyhow::anyhow;
 
 #[derive(Debug, Eq, PartialEq)]
@@ -55,24 +55,36 @@ enum LogicalOperator {
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
-pub enum LogicValue {
+pub enum DataValue {
     StringValue(String),
     U8Value(u8),
     BoolValue(bool),
-    ColumnName(String),
 }
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum LogicSide {
    // pub expression: LogicExpression,
-    Value(LogicValue)
+    Value(DataValue)
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct LogicExpression {
-    pub left_hand: LogicValue,
-    pub right_hand: LogicValue,
+    pub left_hand: ValueExpression,
+    pub right_hand: ValueExpression,
     pub operator: LogicalOperator
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub struct FunctionCall {
+    pub function_name: String,
+    pub parameters: Vec<String>,
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum ValueExpression {
+    FunctionCall(FunctionCall),
+    DataValue(DataValue),
+    ColumnName(String),
 }
 
 enum CreateParserState {
@@ -114,6 +126,14 @@ enum InsertParserState {
     Semicolon,
 }
 
+enum ValueExpressionParserState {
+    NumericOrQuoteOrColumnOrFunction,
+    StringValue,
+    EndQuote,
+    FunctionOpenParenOrEnd,
+    FunctionCloseParen,
+}
+
 #[derive(Debug)]
 enum LogicExpressionParserState {
    NumberOrQuoteOrColname,
@@ -124,14 +144,26 @@ enum LogicExpressionParserState {
 
 
 pub fn tokenizer(text: String) -> Vec<String> {
-    let parts = HashSet::from([' ', ',', ';', '(', ')', '\'']);
+    let parts = HashSet::from([' ', ',', ';', '(', ')', '\'', '\"']);
     let mut tokens: Vec<String> = vec![];
     let mut cur_str = String::new();
     let mut in_quotes = false;
+    let mut cur_quote = '\0';
 
     for cur_char in text.chars() {
-        if cur_char == '\"' {
-            in_quotes = !in_quotes;
+        if !in_quotes && (cur_char == '\"'  || cur_char == '\''){
+            tokens.push(cur_char.to_string());
+            in_quotes = true;
+            cur_quote = cur_char;
+            continue;
+        }
+
+        if in_quotes && cur_char == cur_quote {
+            tokens.push(cur_str);
+            cur_str = String::new();
+            tokens.push(cur_char.to_string());
+            in_quotes = false;
+            continue;
         }
 
         if !in_quotes && parts.contains(&cur_char) {
@@ -146,21 +178,24 @@ pub fn tokenizer(text: String) -> Vec<String> {
             cur_str.push(cur_char);
         }
     }
-    tokens.push(cur_str);
+
+    if cur_str.len() > 0 {
+        tokens.push(cur_str);
+    }
 
     tokens
 }
 
-impl LogicValue {
-    pub fn from_string(string: String) -> ::anyhow::Result<LogicValue> {
+impl DataValue {
+    pub fn from_string(string: String) -> ::anyhow::Result<DataValue> {
         let test = string.parse::<u8>();
         match test {
            Ok(u8_val) => {
-               return Ok(LogicValue::U8Value(u8_val));
+               return Ok(DataValue::U8Value(u8_val));
            },
            Err(_) => {
                let res = string.trim_matches(char::from(0));
-               return Ok(LogicValue::StringValue(res.to_string()));
+               return Ok(DataValue::StringValue(res.to_string()));
            }, 
         }  
     }
@@ -168,20 +203,29 @@ impl LogicValue {
 
 impl LogicExpression {
     pub fn is_valid(&self) -> bool {
-        return mem::discriminant(&self.left_hand) == mem::discriminant(&self.right_hand); 
+        println!("{:?}", self.left_hand);
+        if !self.is_evaluatable() {
+            return false;
+        }
+        if let ValueExpression::DataValue(left) = self.left_hand.clone() {
+            if let ValueExpression::DataValue(right) = self.right_hand.clone() {
+                return mem::discriminant(&left) == mem::discriminant(&right);
+            }
+        }
+        return false;
     }
     
     pub fn is_evaluatable(&self) -> bool {
-        return mem::discriminant(&self.left_hand) != mem::discriminant(&LogicValue::ColumnName(String::from(""))) &&  
-                    mem::discriminant(&self.right_hand) != mem::discriminant(&LogicValue::ColumnName(String::from("")));
+        return mem::discriminant(&self.left_hand) == mem::discriminant(&ValueExpression::DataValue(DataValue::U8Value(0))) &&  
+                    mem::discriminant(&self.right_hand) == mem::discriminant(&ValueExpression::DataValue(DataValue::U8Value(0)));
     }
 
-    pub fn fill_values(&mut self, hmap: HashMap<String, LogicValue>) -> ::anyhow::Result<()> {
+    pub fn fill_values(&mut self, hmap: HashMap<String, ValueExpression>) -> ::anyhow::Result<()> {
         for (name, value) in hmap {
-            if self.left_hand == LogicValue::ColumnName(name.clone()) {
+            if self.left_hand == ValueExpression::ColumnName(name.clone()) {
                 self.left_hand = value.clone();
             }
-            if self.right_hand == LogicValue::ColumnName(name.clone()) {
+            if self.right_hand == ValueExpression::ColumnName(name.clone()) {
                 self.right_hand = value.clone();
             }
         }
@@ -197,18 +241,16 @@ impl LogicExpression {
         }
         println!("{:?}", self);
         match self.left_hand {
-            LogicValue::StringValue(_) => {
+            ValueExpression::DataValue(DataValue::StringValue(_)) => {
                 return self.evaluate_string();
             }
-            LogicValue::BoolValue(_) => {
+            ValueExpression::DataValue(DataValue::BoolValue(_)) => {
                 return self.evaluate_bool();
             }
-            LogicValue::U8Value(_) => {
+            ValueExpression::DataValue(DataValue::U8Value(_)) => {
                 return self.evaluate_u8();
             }
-            LogicValue::ColumnName(_) => {
-                return Err(anyhow!("Cannot compare names of 2 columns, only values"));
-            }
+            _ => {return Err(anyhow!("Cannot compare non-finalized value expressions"))}
         }
     }
 
@@ -229,16 +271,16 @@ impl LogicExpression {
                 return Ok(self.left_hand == self.right_hand);
             }
             LogicalOperator::And => {
-                if let LogicValue::BoolValue(left) = self.left_hand {
-                    if let LogicValue::BoolValue(right) = self.right_hand {
+                if let ValueExpression::DataValue(DataValue::BoolValue(left)) = self.left_hand {
+                    if let ValueExpression::DataValue(DataValue::BoolValue(right)) = self.right_hand {
                         return Ok(left && right);
                     }
                 }
                 return Err(anyhow!("Mismatched datatypes"));
             }
             LogicalOperator::Or => {
-                if let LogicValue::BoolValue(left) = self.left_hand {
-                    if let LogicValue::BoolValue(right) = self.right_hand {
+                if let ValueExpression::DataValue(DataValue::BoolValue(left)) = self.left_hand {
+                    if let ValueExpression::DataValue(DataValue::BoolValue(right)) = self.right_hand {
                         return Ok(left || right);
                     }
                 }
@@ -256,32 +298,32 @@ impl LogicExpression {
                 return Ok(self.left_hand == self.right_hand);
             }
             LogicalOperator::GreaterThan => {
-                if let LogicValue::U8Value(left) = self.left_hand {
-                    if let LogicValue::U8Value(right) = self.right_hand {
+                if let ValueExpression::DataValue(DataValue::U8Value(left)) = self.left_hand {
+                    if let ValueExpression::DataValue(DataValue::U8Value(right)) = self.right_hand {
                         return Ok(left > right);
                     }
                 }
                 return Err(anyhow!("Mismatched datatypes"));
             }
             LogicalOperator::LessThan => {
-                if let LogicValue::U8Value(left) = self.left_hand {
-                    if let LogicValue::U8Value(right) = self.right_hand {
+                if let ValueExpression::DataValue(DataValue::U8Value(left)) = self.left_hand {
+                    if let ValueExpression::DataValue(DataValue::U8Value(right)) = self.right_hand {
                         return Ok(left < right);
                     }
                 }
                 return Err(anyhow!("Mismatched datatypes"));
             }
             LogicalOperator::GreaterThanEqualTo => {
-                if let LogicValue::U8Value(left) = self.left_hand {
-                    if let LogicValue::U8Value(right) = self.right_hand {
+                if let ValueExpression::DataValue(DataValue::U8Value(left)) = self.left_hand {
+                    if let ValueExpression::DataValue(DataValue::U8Value(right)) = self.right_hand {
                         return Ok(left >= right);
                     }
                 }
                 return Err(anyhow!("Mismatched datatypes"));
             }
             LogicalOperator::LessThanEqualTo => {
-                if let LogicValue::U8Value(left) = self.left_hand {
-                    if let LogicValue::U8Value(right) = self.right_hand {
+                if let ValueExpression::DataValue(DataValue::U8Value(left)) = self.left_hand {
+                    if let ValueExpression::DataValue(DataValue::U8Value(right)) = self.right_hand {
                         return Ok(left <= right);
                     }
                 }
@@ -295,6 +337,70 @@ impl LogicExpression {
 }
 
 impl Command {
+    fn parse_value_expression(tokens: &mut Vec<String>) -> ::anyhow::Result<ValueExpression> {
+        let mut state: ValueExpressionParserState = ValueExpressionParserState::NumericOrQuoteOrColumnOrFunction;
+        let mut quote_type = "'";
+        let mut value_expr: Option<ValueExpression> = None;
+        let mut ref_name = String::from("");
+
+        while let Some(token) = &tokens.pop() {
+            match state {
+                ValueExpressionParserState::NumericOrQuoteOrColumnOrFunction => {
+                    // String test
+                    if token == "'" || token == "\"" {
+                        quote_type = if token == "'" { "'" } else { "\"" };
+                        state = ValueExpressionParserState::StringValue;
+                        continue;
+                    }
+
+                    // Numeric Test
+                    let test = token.parse::<u8>();
+                     match test {
+                        Ok(u8_val) => {
+                            return Ok(ValueExpression::DataValue(DataValue::U8Value(u8_val)));
+                        },
+                        Err(_) => { }, 
+                    }  
+
+                    // Function name / Column name test
+                    ref_name = token.clone();
+                    state = ValueExpressionParserState::FunctionOpenParenOrEnd;
+                }
+                ValueExpressionParserState::StringValue => {
+                    value_expr = Some(ValueExpression::DataValue(DataValue::StringValue(token.to_string())));
+                    state = ValueExpressionParserState::EndQuote;
+                }
+                ValueExpressionParserState::EndQuote => {
+                    if token == quote_type {
+                        return Ok(value_expr.unwrap());
+                    } else {
+                        return Err(anyhow!("Mismatched quotes at or near {}", token));
+                    }
+                }
+                ValueExpressionParserState::FunctionOpenParenOrEnd => {
+                    if token == "(" {
+                        state = ValueExpressionParserState::FunctionCloseParen;
+                    } else {
+                        tokens.push(token.to_string());
+                        return Ok(ValueExpression::ColumnName(ref_name.to_string()));
+                    }
+                }
+                ValueExpressionParserState::FunctionCloseParen => {
+                    if token == ")" {
+                        return Ok(ValueExpression::FunctionCall(FunctionCall { function_name: ref_name, parameters: vec![] }));
+                    } else {
+                        return Err(anyhow!("Expected funciton closing parenthesis at or near {}", token));
+                    }
+                }
+            }
+        }
+
+        if ref_name.len() != 0 {
+            return Ok(ValueExpression::ColumnName(ref_name.to_string()));
+        }
+        return Err(anyhow!("Unexpected end of statement"));
+    }
+
     fn parse_insert_command(tokens: &mut Vec<String>) -> ::anyhow::Result<Command> {
         let mut state: InsertParserState = InsertParserState::IntoKeyword;
 
@@ -363,7 +469,23 @@ impl Command {
                     state = InsertParserState::Value;
                 }
                 InsertParserState::Value => {
-                    column_val = token.to_string();
+                    tokens.push(token.to_string());
+                    let expr = Self::parse_value_expression(tokens)?;
+                    if let ValueExpression::DataValue(value) = expr {
+                        match value {
+                            DataValue::StringValue(val) => {
+                                column_val = val.to_string() 
+                            },
+                            DataValue::U8Value(val) => {
+                                column_val = val.to_string(); 
+                            }
+                            DataValue::BoolValue(val) => {
+                                column_val = if val { String::from("TRUE") } else { String::from("FALSE") };
+                            }
+                        }
+                    } else {
+                        return Err(anyhow!("Expected data at or near {}", token));
+                    }
                     state = InsertParserState::ValueEnd;
                 }
                 InsertParserState::ValueEnd => {
@@ -410,8 +532,8 @@ impl Command {
 
     fn parse_logic_expression(tokens: &mut Vec<String>) -> ::anyhow::Result<LogicExpression> {
         let mut state: LogicExpressionParserState = LogicExpressionParserState::NumberOrQuoteOrColname;
-        let mut left_hand: Option<LogicValue> = None;
-        let mut right_hand: Option<LogicValue> = None;
+        let mut left_hand: Option<ValueExpression> = None;
+        let mut right_hand: Option<ValueExpression> = None;
         let mut operator: Option<LogicalOperator> = None;
 
         while let Some(token) = &tokens.pop() {
@@ -424,19 +546,19 @@ impl Command {
                          match test {
                             Ok(u8_val) => {
                                 if left_hand.is_none() {
-                                    left_hand = Some(LogicValue::U8Value(u8_val)); 
+                                    left_hand = Some(ValueExpression::DataValue(DataValue::U8Value(u8_val))); 
                                     state = LogicExpressionParserState::Operator;
                                 } else {
-                                    right_hand = Some(LogicValue::U8Value(u8_val)); 
+                                    right_hand = Some(ValueExpression::DataValue(DataValue::U8Value(u8_val))); 
                                     return Ok(LogicExpression {left_hand: left_hand.unwrap(), right_hand: right_hand.unwrap(), operator: operator.unwrap()});
                                 } 
                             },
                             Err(_) => {
                                 if left_hand.is_none() {
-                                    left_hand = Some(LogicValue::ColumnName(token.to_string())); 
+                                    left_hand = Some(ValueExpression::ColumnName(token.to_string())); 
                                     state = LogicExpressionParserState::Operator;
                                 } else {
-                                    right_hand = Some(LogicValue::ColumnName(token.to_string())); 
+                                    right_hand = Some(ValueExpression::ColumnName(token.to_string())); 
                                     return Ok(LogicExpression {left_hand: left_hand.unwrap(), right_hand: right_hand.unwrap(), operator: operator.unwrap()});
                                 } 
                             }, 
@@ -445,11 +567,11 @@ impl Command {
 
                 }
                 LogicExpressionParserState::StringValue => {
-                    let mut value:  Option<LogicValue> = None;
+                    let mut value:  Option<ValueExpression> = None;
                     if token == "'" {
-                        value = Some(LogicValue::StringValue("".to_string()));
+                        value = Some(ValueExpression::DataValue(DataValue::StringValue("".to_string())));
                     } else {
-                        value = Some(LogicValue::StringValue(token.to_string()));
+                        value = Some(ValueExpression::DataValue(DataValue::StringValue(token.to_string())));
                     }
                     if left_hand.is_none() {
                        left_hand = value; 
@@ -700,5 +822,13 @@ impl Command {
         println!("{:?}", tokens);
         tokens.reverse();
         return Ok(Self::parse_logic_expression(&mut tokens)?);
+    }
+
+    pub fn value_expression_from_string(command_str: String) -> ::anyhow::Result<ValueExpression> {
+        let mut tokens: Vec<String> = tokenizer(command_str.clone());
+        println!("{}", command_str);
+        println!("{:?}", tokens);
+        tokens.reverse();
+        return Ok(Self::parse_value_expression(&mut tokens)?);
     }
 }

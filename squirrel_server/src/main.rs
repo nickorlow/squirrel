@@ -6,13 +6,10 @@ use std::thread;
 use std::collections::HashMap;
 use std::cmp;
 
-mod parser;
-pub use parser::command::Command;
-
-mod table;
-use parser::command::{CreateCommand, InsertCommand, SelectCommand, DeleteCommand, LogicExpression, InsertItem, LogicValue};
-pub use table::datatypes::Datatype;
-pub use table::table_definition::{ColumnDefinition, TableDefinition};
+pub use squirrel_core::parser::command::Command;
+use squirrel_core::parser::command::{CreateCommand, InsertCommand, SelectCommand, DeleteCommand, LogicExpression, InsertItem, DataValue, ValueExpression};
+pub use squirrel_core::table::datatypes::Datatype;
+pub use squirrel_core::table::table_definition::{ColumnDefinition, TableDefinition};
 
 const BUFFER_SIZE: usize = 500;
 
@@ -101,7 +98,7 @@ fn handle_delete(command: DeleteCommand) -> ::anyhow::Result<String> {
         .open(format!("./data/blobs/{}_new", command.table_name))?;
 
     while file.read_exact(buf.as_mut_slice()).is_ok() {
-        let mut row_data: HashMap<String, LogicValue> = HashMap::new();
+        let mut row_data: HashMap<String, ValueExpression> = HashMap::new();
         let mut idx: usize = 0;
         if let Some(ref le) = command.logic_expression {
             let mut logic_expr = le.clone();
@@ -113,7 +110,7 @@ fn handle_delete(command: DeleteCommand) -> ::anyhow::Result<String> {
                 };
                 let str_val = col_def.data_type.from_bytes(&buf[idx..(idx + len)])?;
                 idx += len;
-                row_data.insert(col_def.name.clone(), LogicValue::from_string(str_val)?); 
+                row_data.insert(col_def.name.clone(), ValueExpression::DataValue(DataValue::from_string(str_val)?)); 
             }
             idx = 0;
             logic_expr.fill_values(row_data);
@@ -160,7 +157,7 @@ fn handle_select(command: SelectCommand) -> ::anyhow::Result<String> {
 
     while file.read_exact(buf.as_mut_slice()).is_ok() {
         let mut idx: usize = 0;
-        let mut row_data: HashMap<String, LogicValue> = HashMap::new();
+        let mut row_data: HashMap<String, ValueExpression> = HashMap::new();
         if let Some(ref le) = command.logic_expression {
             let mut logic_expr = le.clone();
             for col_def in &tabledef.column_defs {
@@ -171,7 +168,7 @@ fn handle_select(command: SelectCommand) -> ::anyhow::Result<String> {
                 };
                 let str_val = col_def.data_type.from_bytes(&buf[idx..(idx + len)])?;
                 idx += len;
-                row_data.insert(col_def.name.clone(), LogicValue::from_string(str_val)?); 
+                row_data.insert(col_def.name.clone(), ValueExpression::DataValue(DataValue::from_string(str_val)?)); 
             }
             idx = 0;
             logic_expr.fill_values(row_data);
@@ -314,118 +311,6 @@ fn main() -> std::io::Result<()> {
             Ok(())
         });
     }
-
-    Ok(())
-}
-
-#[test]
-fn logical_expression() -> anyhow::Result<()> {
-    assert_eq!(Command::le_from_string(String::from("1 < 5")).unwrap().evaluate().unwrap(), true);
-    assert_eq!(Command::le_from_string(String::from("1 > 5")).unwrap().evaluate().unwrap(), false);
-    assert_eq!(Command::le_from_string(String::from("1 <= 5")).unwrap().evaluate().unwrap(), true);
-    assert_eq!(Command::le_from_string(String::from("1 >= 5")).unwrap().evaluate().unwrap(), false);
-    assert_eq!(Command::le_from_string(String::from("5 >= 5")).unwrap().evaluate().unwrap(), true);
-    assert_eq!(Command::le_from_string(String::from("5 <= 5")).unwrap().evaluate().unwrap(), true);
-    assert_eq!(Command::le_from_string(String::from("5 = 5")).unwrap().evaluate().unwrap(), true);
-    assert_eq!(Command::le_from_string(String::from("5 AND 5")).unwrap().evaluate().is_ok(), false);
-    assert_eq!(Command::le_from_string(String::from("5 OR 5")).unwrap().evaluate().is_ok(), false);
-
-    assert_eq!(Command::le_from_string(String::from("'Test' = 'Test'")).unwrap().evaluate().unwrap(), true);
-    assert_eq!(Command::le_from_string(String::from("'Test' = 'Text'")).unwrap().evaluate().unwrap(), false);
-    assert_eq!(Command::le_from_string(String::from("'Test' <= 'Test'")).unwrap().evaluate().is_ok(), false);
-    assert_eq!(Command::le_from_string(String::from("'Test' >= 'Test'")).unwrap().evaluate().is_ok(), false);
-    assert_eq!(Command::le_from_string(String::from("'Test' < 'Test'")).unwrap().evaluate().is_ok(), false);
-    assert_eq!(Command::le_from_string(String::from("'Test' > 'Test'")).unwrap().evaluate().is_ok(), false);
-    assert_eq!(Command::le_from_string(String::from("'Test' AND 'Test'")).unwrap().evaluate().is_ok(), false);
-    assert_eq!(Command::le_from_string(String::from("'Test' OR 'Test'")).unwrap().evaluate().is_ok(), false);
-
-    assert_eq!(Command::le_from_string(String::from("'Test' < 5")).unwrap().evaluate().is_ok(), false);
-    assert_eq!(Command::le_from_string(String::from("'Test' > 5")).unwrap().evaluate().is_ok(), false);
-    assert_eq!(Command::le_from_string(String::from("'Test' <= 5")).unwrap().evaluate().is_ok(), false);
-    assert_eq!(Command::le_from_string(String::from("'Test' >= 5")).unwrap().evaluate().is_ok(), false);
-    assert_eq!(Command::le_from_string(String::from("'Test' >= 5")).unwrap().evaluate().is_ok(), false);
-    assert_eq!(Command::le_from_string(String::from("'Test' <= 5")).unwrap().evaluate().is_ok(), false);
-    assert_eq!(Command::le_from_string(String::from("'Test' = 5")).unwrap().evaluate().is_ok(), false);
-    assert_eq!(Command::le_from_string(String::from("'Test' AND 5")).unwrap().evaluate().is_ok(), false);
-    assert_eq!(Command::le_from_string(String::from("'Test' OR 5")).unwrap().evaluate().is_ok(), false);
-
-    Ok(())
-}
-
-#[test]
-fn insert_statement() -> anyhow::Result<()> {
-    let empty_statement = "";
-    let regular_statement = "INSERT INTO users (id, name) VALUES (1, \"Test\");";
-    let extra_ws_statement =
-        "INSERT    INTO     users     (id, name)      VALUES      (1, \"Test\")    ;";
-    let min_ws_statement = "INSERT INTO users(id, name) VALUES(1, \"Test\");";
-    let str_comma_statement = "INSERT INTO users(id, name) VALUES(1, \"Firstname, Lastname\");";
-
-    let expected_output = Command::Insert(InsertCommand {
-        table_name: "users".to_string(),
-        items: HashMap::from([
-            (
-                "id".to_string(),
-                InsertItem {
-                    column_name: "id".to_string(),
-                    column_value: "1".to_string(),
-                },
-            ),
-            (
-                "name".to_string(),
-                InsertItem {
-                    column_name: "name".to_string(),
-                    column_value: "\"Test\"".to_string(),
-                },
-            ),
-        ]),
-    });
-
-    let expected_output_comma = Command::Insert(InsertCommand {
-        table_name: "users".to_string(),
-        items: HashMap::from([
-            (
-                "id".to_string(),
-                InsertItem {
-                    column_name: "id".to_string(),
-                    column_value: "1".to_string(),
-                },
-            ),
-            (
-                "name".to_string(),
-                InsertItem {
-                    column_name: "name".to_string(),
-                    column_value: "\"Firstname, Lastname\"".to_string(),
-                },
-            ),
-        ]),
-    });
-
-    assert_eq!(
-        Command::from_string(String::from(empty_statement)).is_ok(),
-        false
-    );
-
-    assert_eq!(
-        Command::from_string(String::from(regular_statement))?,
-        expected_output
-    );
-
-    assert_eq!(
-        Command::from_string(String::from(extra_ws_statement))?,
-        expected_output
-    );
-
-    assert_eq!(
-        Command::from_string(String::from(min_ws_statement))?,
-        expected_output
-    );
-
-    assert_eq!(
-        Command::from_string(String::from(str_comma_statement))?,
-        expected_output_comma
-    );
-
 
     Ok(())
 }

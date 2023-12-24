@@ -24,17 +24,7 @@ impl Datatype {
     pub fn to_bytes(&self, data_val: String) -> ::anyhow::Result<Vec<u8>> {
         match self {
             Datatype::CharacterVarying => {
-                // Ensure string is formatted properly
-                if !data_val.starts_with('\"') || !data_val.ends_with('\"') {
-                    return Err(::anyhow::anyhow!(
-                        "ERROR: Unable to parse value for type CharacterVarying"
-                    ));
-                }
                 let mut str_bytes = data_val.as_bytes().to_vec();
-
-                // Remove dquotes
-                str_bytes.remove(0);
-                str_bytes.remove(str_bytes.len() - 1);
                 Ok(str_bytes)
             }
             Datatype::Integer => {

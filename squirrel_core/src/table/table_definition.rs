@@ -1,4 +1,4 @@
-use crate::Datatype;
+use crate::table::datatypes::Datatype;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct ColumnDefinition {

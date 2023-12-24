@@ -1,0 +1,8 @@
+[package]
+name = "squirrel_server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.72"
+squirrel_core = { path = "../squirrel_core" }

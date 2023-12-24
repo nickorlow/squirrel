@@ -1,0 +1,11 @@
+[package]
+name = "squirrel_core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.72"
+
+[lib]
+name = "squirrel_core"
+path = "src/main.rs"
