@@ -59,7 +59,6 @@ fn value_expression() -> anyhow::Result<()> {
                     parser::command::Command::value_expression_from_string(String::from(string)).is_ok(),
                     false
                 );
-
             }
         }
     }
